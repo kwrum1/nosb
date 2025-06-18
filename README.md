@@ -1,2 +1,2 @@
 # nosb install sh
-bash <(curl -sL https://raw.githubusercontent.com/username/repo/main/nosb.sh)  happy run
+bash <(curl -Ls https://raw.githubusercontent.com/kwrum1/nosb/main/nosb.sh)  happy run
