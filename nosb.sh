@@ -19,7 +19,7 @@ get_network_info() {
 # 安装依赖包
 install_dependencies() {
     echo -e "${YELLOW}[+] 正在安装依赖包...${NC}"
-    local packages="unzip jq uuid-runtime openssl wget curl"
+    local packages="unzip jq uuid-runtime openssl wget curl qrencode"
     
     if command -v apt &>/dev/null; then
         apt update -y
@@ -317,6 +317,84 @@ EOF
     echo -e "${GREEN}[√] Hysteria2 安装完成!${NC}"
 }
 
+# 安装AnyTLS-Go
+install_anytls() {
+    echo -e "${YELLOW}[+] 开始安装 AnyTLS-Go...${NC}"
+    
+    # 定义变量
+    local ANYTLS_VERSION="v0.0.8"
+    local ANYTLS_PORT=$(shuf -i 10000-65000 -n 1)
+    local ANYTLS_PASSWORD=$(tr -dc 'a-zA-Z0-9' </dev/urandom | fold -w 16 | head -n 1)
+    local INSTALL_DIR="/usr/local/bin"
+    local SERVICE_FILE="/etc/systemd/system/anytls-server.service"
+    local BINARY_NAME="anytls-server"
+    local BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
+    
+    # 如果已安装则卸载
+    if [ -f "$SERVICE_FILE" ]; then
+        systemctl stop anytls-server
+        systemctl disable anytls-server > /dev/null 2>&1
+        rm -f $SERVICE_FILE
+        rm -f $BINARY_PATH
+    fi
+    
+    # 检测架构
+    local ARCH=$(uname -m)
+    case $ARCH in
+        x86_64 | amd64) ANYTLS_ARCH="amd64" ;;
+        aarch64 | arm64) ANYTLS_ARCH="arm64" ;;
+        *)
+            echo -e "${RED}不支持的架构: $ARCH${NC}"
+            return
+            ;;
+    esac
+    
+    # 下载最新版本
+    local VERSION_FOR_FILENAME=${ANYTLS_VERSION#v}
+    local FILENAME="anytls_${VERSION_FOR_FILENAME}_linux_${ANYTLS_ARCH}.zip"
+    local DOWNLOAD_URL="https://github.com/anytls/anytls-go/releases/download/$ANYTLS_VERSION/$FILENAME"
+    
+    # 下载并解压
+    wget -O /tmp/$FILENAME -q "$DOWNLOAD_URL" || { echo -e "${RED}下载失败!${NC}"; return; }
+    unzip -q -o "/tmp/$FILENAME" -d /tmp/anytls
+    mv "/tmp/anytls/$BINARY_NAME" $BINARY_PATH
+    chmod +x $BINARY_PATH
+    rm -rf /tmp/anytls "/tmp/$FILENAME"
+    
+    # 创建系统服务
+    cat > $SERVICE_FILE <<EOL
+[Unit]
+Description=AnyTLS Server Service
+Documentation=https://github.com/anytls/anytls-go
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=$BINARY_PATH -l 0.0.0.0:$ANYTLS_PORT -p "$ANYTLS_PASSWORD"
+Restart=on-failure
+RestartSec=10s
+LimitNOFILE=65535
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOL
+    
+    # 启动服务
+    systemctl daemon-reload
+    systemctl enable anytls-server > /dev/null 2>&1
+    systemctl start anytls-server
+    
+    # 保存配置信息
+    echo "ANYTLS_PORT=$ANYTLS_PORT" >> /root/proxy-config
+    echo "ANYTLS_PASSWORD=$ANYTLS_PASSWORD" >> /root/proxy-config
+    
+    echo -e "${GREEN}[√] AnyTLS-Go 安装完成!${NC}"
+}
+
 # 创建管理脚本
 create_management_script() {
     cat > /usr/local/bin/x << 'EOF'
@@ -374,6 +452,13 @@ show_links() {
     if [ -n "$HYSTERIA_PORT" ]; then
         echo -e "${CYAN}Hysteria2 链接:${NC}"
         echo -e "${GREEN}hysteria2://$HYSTERIA_PASSWORD@$public_ip:$HYSTERIA_PORT/?sni=www.bing.com&alpn=h3&insecure=1#$isp${NC}"
+        echo -e "${YELLOW}------------------------------------------------${NC}"
+    fi
+    
+    # AnyTLS 链接
+    if [ -n "$ANYTLS_PORT" ]; then
+        echo -e "${CYAN}AnyTLS 链接:${NC}"
+        echo -e "${GREEN}anytls://$ANYTLS_PASSWORD@$public_ip:$ANYTLS_PORT?allowInsecure=true#$isp${NC}"
         echo -e "${YELLOW}------------------------------------------------${NC}"
     fi
     
@@ -456,6 +541,40 @@ update_services() {
         echo -e "${GREEN}Hysteria2 更新完成!${NC}"
     fi
     
+    # 更新 AnyTLS
+    if [ -f "/etc/systemd/system/anytls-server.service" ]; then
+        echo -e "${CYAN}更新 AnyTLS...${NC}"
+        systemctl stop anytls-server
+        
+        local ANYTLS_VERSION="v0.0.8"
+        local INSTALL_DIR="/usr/local/bin"
+        local BINARY_NAME="anytls-server"
+        local BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
+        
+        # 检测架构
+        local ARCH=$(uname -m)
+        case $ARCH in
+            x86_64 | amd64) ANYTLS_ARCH="amd64" ;;
+            aarch64 | arm64) ANYTLS_ARCH="arm64" ;;
+            *) ;;
+        esac
+        
+        # 下载最新版本
+        local VERSION_FOR_FILENAME=${ANYTLS_VERSION#v}
+        local FILENAME="anytls_${VERSION_FOR_FILENAME}_linux_${ANYTLS_ARCH}.zip"
+        local DOWNLOAD_URL="https://github.com/anytls/anytls-go/releases/download/$ANYTLS_VERSION/$FILENAME"
+        
+        # 下载并解压
+        wget -O /tmp/$FILENAME -q "$DOWNLOAD_URL"
+        unzip -q -o "/tmp/$FILENAME" -d /tmp/anytls
+        mv "/tmp/anytls/$BINARY_NAME" $BINARY_PATH
+        chmod +x $BINARY_PATH
+        rm -rf /tmp/anytls "/tmp/$FILENAME"
+        
+        systemctl start anytls-server
+        echo -e "${GREEN}AnyTLS 更新完成!${NC}"
+    fi
+    
     echo -e "${GREEN}[√] 所有协议更新完成!${NC}"
 }
 
@@ -488,6 +607,15 @@ uninstall_services() {
         rm -rf /etc/hysteria
         rm -f /etc/systemd/system/hysteria-server.service
         echo -e "${CYAN}Hysteria2 已卸载${NC}"
+    fi
+    
+    # 卸载 AnyTLS
+    if [ -f "/etc/systemd/system/anytls-server.service" ]; then
+        systemctl stop anytls-server
+        systemctl disable anytls-server > /dev/null 2>&1
+        rm -f /etc/systemd/system/anytls-server.service
+        rm -f /usr/local/bin/anytls-server
+        echo -e "${CYAN}AnyTLS 已卸载${NC}"
     fi
     
     # 清理配置文件
@@ -552,10 +680,11 @@ install_all_protocols() {
     # 安装依赖
     install_dependencies
     
-    # 安装三个协议
+    # 安装四个协议
     install_juicity
     install_tuic
     install_hysteria2
+    install_anytls
     
     # 创建管理脚本
     create_management_script
