@@ -143,78 +143,51 @@ install_or_update_all() {
     echo -e "${GREEN}[√] 所有协议服务已安装或更新完成!${NC}"
 }
 
-# 1. 补全 get_network_info 函数（放在脚本顶部或合适位置）
-get_network_info() {
-    # 返回公网IP和ISP名称，用逗号分隔
-    local ip isp
-    ip=$(curl -s https://ip.gs || curl -s https://api.ip.sb/ip)
-    isp=$(curl -s https://ip.gs/isp || echo "Unknown ISP")
-    echo "$ip,$isp"
-}
-
-# 2. 修正 show_links 函数开头，source配置文件时加判断，并保证定义了必需变量
-
 show_links() {
-    # 先清空之前可能的变量
-    unset XRAY_UUID XRAY_PORT XRAY_PUBLIC_KEY XRAY_SHORT_ID
-    unset JUICITY_SHARE_LINK
-    unset TUIC_UUID TUIC_PASSWORD TUIC_PORT
-    unset HYSTERIA_PASSWORD HYSTERIA_PORT
-    unset ANYTLS_PASSWORD ANYTLS_PORT
+    # 直接获取 IP 和 ISP
+    local network_info=($(curl -s --max-time 2 ip.sb || curl -s --max-time 1 ipv6.ip.sb | tr '\n' ',' | sed 's/,$//'))
+    local public_ip=$(echo $network_info | cut -d',' -f1)
+    local isp=$(curl -s https://speed.cloudflare.com/meta | jq -r '[.asn, .asOrganization, .country] | map(tostring) | join("-")' 2>/dev/null || echo "unknown-isp")
 
-    # 读取主配置
-    if [[ -f "$CONFIG_FILE" ]]; then
-        source "$CONFIG_FILE"
-    fi
-    # 读取 Juicity 配置
-    if [[ -f "$JUICITY_CONFIG_FILE" ]]; then
-        source "$JUICITY_CONFIG_FILE"
-    fi
-
-    # 调用网络信息
-    local network_info=($(get_network_info | tr ',' ' '))
-    local public_ip=${network_info[0]}
-    local isp=${network_info[1]}
-    
     echo -e "${YELLOW}================================================${NC}"
     echo -e "${GREEN}                 协议连接信息                  ${NC}"
     echo -e "${YELLOW}================================================${NC}"
     
-    # Xray Reality 链接示例（假设你配置里变量名）
-    if [[ -n "$XRAY_UUID" && -n "$XRAY_PORT" && -n "$XRAY_PUBLIC_KEY" && -n "$XRAY_SHORT_ID" ]]; then
+    # Xray Reality 链接
+    if [ -n "$XRAY_UUID" ]; then
         echo -e "${CYAN}Xray Reality 链接:${NC}"
         echo -e "${GREEN}vless://${XRAY_UUID}@${public_ip}:${XRAY_PORT}?encryption=none&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${XRAY_PUBLIC_KEY}&sid=${XRAY_SHORT_ID}&allowInsecure=1&type=xhttp&mode=auto#${isp}${NC}"
         echo -e "${YELLOW}------------------------------------------------${NC}"
     fi
     
     # Juicity 链接
-    if [[ -n "$JUICITY_SHARE_LINK" ]]; then
+    if [ -n "$JUICITY_SHARE_LINK" ]; then
         echo -e "${CYAN}Juicity 链接:${NC}"
-        echo -e "${GREEN}${JUICITY_SHARE_LINK}${NC}"
+        echo -e "${GREEN}$JUICITY_SHARE_LINK${NC}"
         echo -e "${YELLOW}------------------------------------------------${NC}"
     fi
     
-    # Tuic 链接示例
-    if [[ -n "$TUIC_UUID" && -n "$TUIC_PASSWORD" && -n "$TUIC_PORT" ]]; then
+    # Tuic 链接
+    if [ -n "$TUIC_PORT" ]; then
         echo -e "${CYAN}Tuic 链接:${NC}"
-        echo -e "${GREEN}tuic://${TUIC_UUID}:${TUIC_PASSWORD}@${public_ip}:${TUIC_PORT}?congestion_control=bbr&alpn=h3&sni=www.bing.com&udp_relay_mode=native&allow_insecure=1#${isp}${NC}"
+        echo -e "${GREEN}tuic://$TUIC_UUID:$TUIC_PASSWORD@$public_ip:$TUIC_PORT?congestion_control=bbr&alpn=h3&sni=www.bing.com&udp_relay_mode=native&allow_insecure=1#$isp${NC}"
         echo -e "${YELLOW}------------------------------------------------${NC}"
     fi
     
-    # Hysteria2 链接示例
-    if [[ -n "$HYSTERIA_PASSWORD" && -n "$HYSTERIA_PORT" ]]; then
+    # Hysteria2 链接
+    if [ -n "$HYSTERIA_PORT" ]; then
         echo -e "${CYAN}Hysteria2 链接:${NC}"
-        echo -e "${GREEN}hysteria2://${HYSTERIA_PASSWORD}@${public_ip}:${HYSTERIA_PORT}/?sni=www.bing.com&alpn=h3&insecure=1#${isp}${NC}"
+        echo -e "${GREEN}hysteria2://$HYSTERIA_PASSWORD@$public_ip:$HYSTERIA_PORT/?sni=www.bing.com&alpn=h3&insecure=1#$isp${NC}"
         echo -e "${YELLOW}------------------------------------------------${NC}"
     fi
     
-    # AnyTLS 链接示例
-    if [[ -n "$ANYTLS_PASSWORD" && -n "$ANYTLS_PORT" ]]; then
+    # AnyTLS 链接
+    if [ -n "$ANYTLS_PORT" ]; then
         echo -e "${CYAN}AnyTLS 链接:${NC}"
-        echo -e "${GREEN}anytls://${ANYTLS_PASSWORD}@${public_ip}:${ANYTLS_PORT}?allowInsecure=true#${isp}${NC}"
+        echo -e "${GREEN}anytls://$ANYTLS_PASSWORD@$public_ip:$ANYTLS_PORT?allowInsecure=true#$isp${NC}"
         echo -e "${YELLOW}------------------------------------------------${NC}"
     fi
-
+    
     echo -e "${GREEN}所有链接已显示完毕${NC}"
     echo -e "${YELLOW}================================================${NC}"
 }
