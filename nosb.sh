@@ -144,48 +144,73 @@ install_or_update_all() {
 }
 
 show_links() {
-    # 直接获取 IP 和 ISP
-    local network_info=($(curl -s --max-time 2 ip.sb || curl -s --max-time 1 ipv6.ip.sb | tr '\n' ',' | sed 's/,$//'))
-    local public_ip=$(echo $network_info | cut -d',' -f1)
-    local isp=$(curl -s https://speed.cloudflare.com/meta | jq -r '[.asn, .asOrganization, .country] | map(tostring) | join("-")' 2>/dev/null || echo "unknown-isp")
+    # 安全获取公网IP（优先IPv4）
+    public_ip=$(curl -s --max-time 2 ip.sb)
+    if [ -z "$public_ip" ]; then
+        public_ip=$(curl -s --max-time 2 ipv6.ip.sb)
+    fi
+    [ -z "$public_ip" ] && public_ip="无法获取公网IP"
+
+    # 获取ISP信息
+    isp_info=$(curl -s --max-time 2 https://speed.cloudflare.com/meta)
+    if [ -n "$isp_info" ]; then
+        asn=$(echo "$isp_info" | jq -r '.asn // empty')
+        org=$(echo "$isp_info" | jq -r '.asOrganization // empty')
+        country=$(echo "$isp_info" | jq -r '.country // empty')
+        isp="${asn}-${org}-${country}"
+    else
+        isp="未知ISP"
+    fi
 
     echo -e "${YELLOW}================================================${NC}"
     echo -e "${GREEN}                 协议连接信息                  ${NC}"
     echo -e "${YELLOW}================================================${NC}"
     
     # Xray Reality 链接
-    if [ -n "$XRAY_UUID" ]; then
+    if [ -n "$XRAY_UUID" ] && [ -n "$XRAY_PORT" ] && [ -n "$XRAY_PUBLIC_KEY" ] && [ -n "$XRAY_SHORT_ID" ]; then
         echo -e "${CYAN}Xray Reality 链接:${NC}"
         echo -e "${GREEN}vless://${XRAY_UUID}@${public_ip}:${XRAY_PORT}?encryption=none&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${XRAY_PUBLIC_KEY}&sid=${XRAY_SHORT_ID}&allowInsecure=1&type=xhttp&mode=auto#${isp}${NC}"
         echo -e "${YELLOW}------------------------------------------------${NC}"
     fi
     
-    # Juicity 链接
-    if [ -n "$JUICITY_SHARE_LINK" ]; then
-        echo -e "${CYAN}Juicity 链接:${NC}"
-        echo -e "${GREEN}$JUICITY_SHARE_LINK${NC}"
-        echo -e "${YELLOW}------------------------------------------------${NC}"
+    # Juicity 链接（从配置文件读取）
+    if [ -f "$JUICITY_CONFIG_FILE" ]; then
+        source "$JUICITY_CONFIG_FILE"
+        if [ -n "$JUICITY_SHARE_LINK" ]; then
+            echo -e "${CYAN}Juicity 链接:${NC}"
+            echo -e "${GREEN}$JUICITY_SHARE_LINK${NC}"
+            echo -e "${YELLOW}------------------------------------------------${NC}"
+        fi
     fi
     
-    # Tuic 链接
-    if [ -n "$TUIC_PORT" ]; then
-        echo -e "${CYAN}Tuic 链接:${NC}"
-        echo -e "${GREEN}tuic://$TUIC_UUID:$TUIC_PASSWORD@$public_ip:$TUIC_PORT?congestion_control=bbr&alpn=h3&sni=www.bing.com&udp_relay_mode=native&allow_insecure=1#$isp${NC}"
-        echo -e "${YELLOW}------------------------------------------------${NC}"
+    # Tuic 链接（从主配置文件读取）
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+        if [ -n "$TUIC_UUID" ] && [ -n "$TUIC_PASSWORD" ] && [ -n "$TUIC_PORT" ]; then
+            echo -e "${CYAN}Tuic 链接:${NC}"
+            echo -e "${GREEN}tuic://$TUIC_UUID:$TUIC_PASSWORD@$public_ip:$TUIC_PORT?congestion_control=bbr&alpn=h3&sni=www.bing.com&udp_relay_mode=native&allow_insecure=1#$isp${NC}"
+            echo -e "${YELLOW}------------------------------------------------${NC}"
+        fi
     fi
     
-    # Hysteria2 链接
-    if [ -n "$HYSTERIA_PORT" ]; then
-        echo -e "${CYAN}Hysteria2 链接:${NC}"
-        echo -e "${GREEN}hysteria2://$HYSTERIA_PASSWORD@$public_ip:$HYSTERIA_PORT/?sni=www.bing.com&alpn=h3&insecure=1#$isp${NC}"
-        echo -e "${YELLOW}------------------------------------------------${NC}"
+    # Hysteria2 链接（从主配置文件读取）
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+        if [ -n "$HYSTERIA_PASSWORD" ] && [ -n "$HYSTERIA_PORT" ]; then
+            echo -e "${CYAN}Hysteria2 链接:${NC}"
+            echo -e "${GREEN}hysteria2://$HYSTERIA_PASSWORD@$public_ip:$HYSTERIA_PORT/?sni=www.bing.com&alpn=h3&insecure=1#$isp${NC}"
+            echo -e "${YELLOW}------------------------------------------------${NC}"
+        fi
     fi
     
-    # AnyTLS 链接
-    if [ -n "$ANYTLS_PORT" ]; then
-        echo -e "${CYAN}AnyTLS 链接:${NC}"
-        echo -e "${GREEN}anytls://$ANYTLS_PASSWORD@$public_ip:$ANYTLS_PORT?allowInsecure=true#$isp${NC}"
-        echo -e "${YELLOW}------------------------------------------------${NC}"
+    # AnyTLS 链接（从主配置文件读取）
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE"
+        if [ -n "$ANYTLS_PASSWORD" ] && [ -n "$ANYTLS_PORT" ]; then
+            echo -e "${CYAN}AnyTLS 链接:${NC}"
+            echo -e "${GREEN}anytls://$ANYTLS_PASSWORD@$public_ip:$ANYTLS_PORT?allowInsecure=true#$isp${NC}"
+            echo -e "${YELLOW}------------------------------------------------${NC}"
+        fi
     fi
     
     echo -e "${GREEN}所有链接已显示完毕${NC}"
