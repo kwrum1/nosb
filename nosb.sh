@@ -9,17 +9,35 @@ PURPLE='\033[0;35m'
 CYAN='\033[0;36m'
 NC='\033[0m' # 恢复默认颜色
 
+# 全局变量
+export PORT=${PORT:-$(shuf -i 2000-65000 -n 1)}
+export UUID=${UUID:-$(cat /proc/sys/kernel/random/uuid)}
+CONFIG_FILE="/root/proxy-config"
+
+# 检查root权限
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        echo -e "${RED}此脚本必须以root权限运行!${NC}"
+        exit 1
+    fi
+}
+
 # 获取公网IP和ISP信息
 get_network_info() {
-    public_ip=$(curl -s https://api.ipify.org)
-    isp=$(curl -s https://speed.cloudflare.com/meta | jq -r '[.asn, .asOrganization, .country] | map(tostring) | join("-")')
+    public_ip=$(curl -s --max-time 2 ip.sb || curl -s --max-time 1 ipv6.ip.sb)
+    if [[ -z "${public_ip}" ]]; then
+        echo -e "${RED}无法获取到你的服务器IP${NC}"
+        return 1
+    fi
+    
+    isp=$(curl -s https://speed.cloudflare.com/meta | jq -r '[.asn, .asOrganization, .country] | map(tostring) | join("-")' 2>/dev/null || echo "unknown-isp")
     echo "$public_ip,$isp"
 }
 
 # 安装依赖包
 install_dependencies() {
     echo -e "${YELLOW}[+] 正在安装依赖包...${NC}"
-    local packages="unzip jq uuid-runtime openssl wget curl qrencode"
+    local packages="unzip jq uuid-runtime openssl wget curl qrencode gawk"
     
     if command -v apt &>/dev/null; then
         apt update -y
@@ -32,9 +50,93 @@ install_dependencies() {
         apk add $packages
     else
         echo -e "${RED}暂不支持的系统!${NC}"
-        exit 1
+        return 1
     fi
     echo -e "${GREEN}[√] 依赖包安装完成${NC}"
+}
+
+# 安装Xray Reality
+install_xray_reality() {
+    echo -e "${YELLOW}[+] 开始安装 Xray Reality...${NC}"
+    
+    # 如果已安装则跳过
+    if [ -f "/usr/local/bin/xray" ]; then
+        echo -e "${YELLOW}Xray 已安装，跳过安装步骤${NC}"
+        return
+    fi
+    
+    # 安装Xray
+    bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+    
+    # 生成密钥
+    reX25519Key=$(/usr/local/bin/xray x25519)
+    rePrivateKey=$(echo "${reX25519Key}" | head -1 | awk '{print $3}')
+    rePublicKey=$(echo "${reX25519Key}" | tail -n 1 | awk '{print $3}')
+    shortId=$(openssl rand -hex 8)
+
+    # 配置Xray
+    cat >/usr/local/etc/xray/config.json <<EOF
+{
+  "inbounds": [
+    {
+      "port": $PORT, 
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "$UUID"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "target": "www.nazhumi.com:443",
+          "xver": 0,
+          "serverNames": [
+            "www.nazhumi.com"
+          ],
+          "privateKey": "$rePrivateKey",
+          "shortIds": [
+            "$shortId"
+          ]
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
+      }
+    }
+  ],
+  "outbounds": [
+      {
+        "protocol": "freedom",
+        "tag": "direct"
+        },
+      {
+        "protocol": "blackhole",
+        "tag": "blocked"
+      }
+    ]    
+}
+EOF
+
+    # 启动服务
+    systemctl enable xray.service && systemctl restart xray.service
+    
+    # 保存配置
+    echo "XRAY_PORT=$PORT" >> $CONFIG_FILE
+    echo "XRAY_UUID=$UUID" >> $CONFIG_FILE
+    echo "XRAY_PUBLIC_KEY=$rePublicKey" >> $CONFIG_FILE
+    echo "XRAY_SHORT_ID=$shortId" >> $CONFIG_FILE
+    
+    echo -e "${GREEN}[√] Xray Reality 安装完成!${NC}"
 }
 
 # 安装Juicity
@@ -47,12 +149,10 @@ install_juicity() {
     local SERVICE_FILE="/etc/systemd/system/juicity.service"
     local JUICITY_SERVER="$INSTALL_DIR/juicity-server"
     
-    # 如果已安装则卸载
+    # 如果已安装则跳过
     if [[ -d $INSTALL_DIR && -f $SERVICE_FILE ]]; then
-        systemctl stop juicity
-        systemctl disable juicity > /dev/null 2>&1
-        rm -rf $INSTALL_DIR
-        rm -f $SERVICE_FILE
+        echo -e "${YELLOW}Juicity 已安装，跳过安装步骤${NC}"
+        return
     fi
     
     # 检测架构
@@ -138,10 +238,10 @@ EOL
     local SHARE_LINK=$($JUICITY_SERVER generate-sharelink -c $CONFIG_FILE)
     
     # 保存配置信息
-    echo "JUICITY_PORT=$PORT" >> /root/proxy-config
-    echo "JUICITY_UUID=$UUID" >> /root/proxy-config
-    echo "JUICITY_PASSWORD=$PASSWORD" >> /root/proxy-config
-    echo "JUICITY_SHARE_LINK=\"$SHARE_LINK\"" >> /root/proxy-config
+    echo "JUICITY_PORT=$PORT" >> $CONFIG_FILE
+    echo "JUICITY_UUID=$UUID" >> $CONFIG_FILE
+    echo "JUICITY_PASSWORD=$PASSWORD" >> $CONFIG_FILE
+    echo "JUICITY_SHARE_LINK=\"$SHARE_LINK\"" >> $CONFIG_FILE
     
     echo -e "${GREEN}[√] Juicity 安装完成!${NC}"
 }
@@ -154,13 +254,10 @@ install_tuic() {
     local INSTALL_DIR="/root/tuic"
     local SERVICE_FILE="/etc/systemd/system/tuic.service"
     
-    # 如果已安装则卸载
+    # 如果已安装则跳过
     if [ -d "$INSTALL_DIR" ]; then
-        rm -rf $INSTALL_DIR
-        systemctl stop tuic
-        pkill -f tuic-server
-        systemctl disable tuic > /dev/null 2>&1
-        rm -f $SERVICE_FILE
+        echo -e "${YELLOW}Tuic 已安装，跳过安装步骤${NC}"
+        return
     fi
     
     # 检测架构
@@ -247,9 +344,9 @@ EOL
     systemctl start tuic
     
     # 保存配置信息
-    echo "TUIC_PORT=$port" >> /root/proxy-config
-    echo "TUIC_UUID=$UUID" >> /root/proxy-config
-    echo "TUIC_PASSWORD=$password" >> /root/proxy-config
+    echo "TUIC_PORT=$port" >> $CONFIG_FILE
+    echo "TUIC_UUID=$UUID" >> $CONFIG_FILE
+    echo "TUIC_PASSWORD=$password" >> $CONFIG_FILE
     
     echo -e "${GREEN}[√] Tuic-V5 安装完成!${NC}"
 }
@@ -262,12 +359,10 @@ install_hysteria2() {
     local HY2_PORT=$(shuf -i 2000-65000 -n 1)
     local PASSWD=$(cat /proc/sys/kernel/random/uuid)
     
-    # 如果已安装则卸载
+    # 如果已安装则跳过
     if [ -f "/etc/systemd/system/hysteria-server.service" ]; then
-        systemctl stop hysteria-server.service
-        systemctl disable hysteria-server.service > /dev/null 2>&1
-        rm -rf /etc/hysteria
-        rm -f /etc/systemd/system/hysteria-server.service
+        echo -e "${YELLOW}Hysteria2 已安装，跳过安装步骤${NC}"
+        return
     fi
     
     # 安装官方脚本
@@ -311,8 +406,8 @@ EOF
     systemctl enable hysteria-server.service > /dev/null 2>&1
     
     # 保存配置信息
-    echo "HYSTERIA_PORT=$HY2_PORT" >> /root/proxy-config
-    echo "HYSTERIA_PASSWORD=$PASSWD" >> /root/proxy-config
+    echo "HYSTERIA_PORT=$HY2_PORT" >> $CONFIG_FILE
+    echo "HYSTERIA_PASSWORD=$PASSWD" >> $CONFIG_FILE
     
     echo -e "${GREEN}[√] Hysteria2 安装完成!${NC}"
 }
@@ -330,12 +425,10 @@ install_anytls() {
     local BINARY_NAME="anytls-server"
     local BINARY_PATH="$INSTALL_DIR/$BINARY_NAME"
     
-    # 如果已安装则卸载
+    # 如果已安装则跳过
     if [ -f "$SERVICE_FILE" ]; then
-        systemctl stop anytls-server
-        systemctl disable anytls-server > /dev/null 2>&1
-        rm -f $SERVICE_FILE
-        rm -f $BINARY_PATH
+        echo -e "${YELLOW}AnyTLS 已安装，跳过安装步骤${NC}"
+        return
     fi
     
     # 检测架构
@@ -389,39 +482,105 @@ EOL
     systemctl start anytls-server
     
     # 保存配置信息
-    echo "ANYTLS_PORT=$ANYTLS_PORT" >> /root/proxy-config
-    echo "ANYTLS_PASSWORD=$ANYTLS_PASSWORD" >> /root/proxy-config
+    echo "ANYTLS_PORT=$ANYTLS_PORT" >> $CONFIG_FILE
+    echo "ANYTLS_PASSWORD=$ANYTLS_PASSWORD" >> $CONFIG_FILE
     
     echo -e "${GREEN}[√] AnyTLS-Go 安装完成!${NC}"
 }
 
-# 创建管理脚本
-create_management_script() {
-    cat > /usr/local/bin/x << 'EOF'
-#!/bin/bash
+# 安装XanMod内核并优化
+install_kernel_and_optimize() {
+    echo -e "${YELLOW}[+] 开始安装XanMod内核并优化系统...${NC}"
+    
+    # 检查是否已安装XanMod内核
+    if uname -r | grep -q "xanmod"; then
+        echo -e "${YELLOW}XanMod内核已安装，跳过安装步骤${NC}"
+    else
+        echo -e "${CYAN}[1/3] 安装XanMod内核...${NC}"
+        
+        # 注册PGP密钥
+        wget -qO - https://dl.xanmod.org/archive.key | sudo gpg --dearmor -vo /etc/apt/keyrings/xanmod-archive-keyring.gpg
+        
+        # 添加仓库
+        echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' | sudo tee /etc/apt/sources.list.d/xanmod-release.list
+        
+        # 更新并安装
+        apt update && apt install linux-xanmod-edge-x64v3 -y
+        
+        echo -e "${GREEN}[√] XanMod内核安装完成，需要重启生效${NC}"
+    fi
+    
+    echo -e "${CYAN}[2/3] 应用系统优化配置...${NC}"
+    
+    # 基础系统参数
+    cat >/etc/sysctl.d/99-custom-gateway.conf <<EOF
+# 系统基础
+kernel.pid_max = 65535
+vm.swappiness = 10
+vm.overcommit_memory = 1
+vm.dirty_ratio = 8
+vm.dirty_background_ratio = 2
+vm.min_free_kbytes = 65536
+kernel.numa_balancing = 0
 
-# 颜色定义
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
-BLUE='\033[0;34m'
-PURPLE='\033[0;35m'
-CYAN='\033[0;36m'
-NC='\033[0m' # 恢复默认颜色
+# TCP 网络优化
+net.core.rmem_max = 4194304
+net.core.wmem_max = 4194304
+net.core.rmem_default = 262144
+net.core.wmem_default = 262144
+net.core.somaxconn = 4096
+net.core.netdev_max_backlog = 4096
+net.core.optmem_max = 65536
 
-# 加载配置
-if [ -f "/root/proxy-config" ]; then
-    source /root/proxy-config
-else
-    echo -e "${RED}未找到配置文件，请先安装协议${NC}"
-    exit 1
-fi
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_slow_start_after_idle = 0
+net.ipv4.tcp_timestamps = 0
+net.ipv4.tcp_fastopen = 3
+net.ipv4.tcp_mtu_probing = 1
+net.ipv4.tcp_rmem = 4096 87380 4194304
+net.ipv4.tcp_wmem = 4096 65536 4194304
+net.ipv4.tcp_keepalive_time = 120
+net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_congestion_control = bbr
+net.core.default_qdisc = fq
+net.ipv4.tcp_ecn = 1
 
-# 获取公网IP和ISP信息
-get_network_info() {
-    public_ip=$(curl -s https://api.ipify.org)
-    isp=$(curl -s https://speed.cloudflare.com/meta | jq -r '[.asn, .asOrganization, .country] | map(tostring) | join("-")')
-    echo "$public_ip,$isp"
+# 安全与稳定性
+net.ipv4.ip_local_port_range = 1024 65535
+net.ipv4.tcp_max_tw_buckets = 8192
+net.ipv4.tcp_max_orphans = 32768
+net.ipv4.route.gc_timeout = 100
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+EOF
+
+    # 应用sysctl配置
+    sysctl --system >/dev/null 2>&1
+    
+    echo -e "${CYAN}[3/3] 设置文件句柄限制和systemd参数...${NC}"
+    
+    # 设置文件句柄限制
+    cat >/etc/security/limits.d/99-custom-nofile.conf <<EOF
+* soft nofile 100000
+* hard nofile 100000
+root soft nofile 100000
+root hard nofile 100000
+EOF
+
+    grep -q "ulimit -SHn" /etc/profile || echo "ulimit -SHn 100000" >> /etc/profile
+
+    # 设置systemd参数
+    sed -i '/^DefaultTasksMax/d' /etc/systemd/system.conf
+    echo "DefaultTasksMax=infinity" >> /etc/systemd/system.conf
+    systemctl daemon-reexec
+    
+    echo -e "${GREEN}[√] 内核安装和系统优化完成! 建议重启系统使所有更改生效${NC}"
 }
 
 # 显示所有链接
@@ -433,6 +592,13 @@ show_links() {
     echo -e "${YELLOW}================================================${NC}"
     echo -e "${GREEN}                 协议连接信息                  ${NC}"
     echo -e "${YELLOW}================================================${NC}"
+    
+    # Xray Reality 链接
+    if [ -n "$XRAY_UUID" ]; then
+        echo -e "${CYAN}Xray Reality 链接:${NC}"
+        echo -e "${GREEN}vless://${XRAY_UUID}@${public_ip}:${XRAY_PORT}?encryption=none&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${XRAY_PUBLIC_KEY}&sid=${XRAY_SHORT_ID}&allowInsecure=1&type=xhttp&mode=auto#${isp}${NC}"
+        echo -e "${YELLOW}------------------------------------------------${NC}"
+    fi
     
     # Juicity 链接
     if [ -n "$JUICITY_SHARE_LINK" ]; then
@@ -469,6 +635,14 @@ show_links() {
 # 更新所有服务
 update_services() {
     echo -e "${YELLOW}[+] 正在更新所有协议服务...${NC}"
+    
+    # 更新 Xray
+    if [ -f "/usr/local/bin/xray" ]; then
+        echo -e "${CYAN}更新 Xray...${NC}"
+        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
+        systemctl restart xray
+        echo -e "${GREEN}Xray 更新完成!${NC}"
+    fi
     
     # 更新 Juicity
     if [ -d "/root/juicity" ]; then
@@ -582,6 +756,12 @@ update_services() {
 uninstall_services() {
     echo -e "${YELLOW}[+] 正在卸载所有协议服务...${NC}"
     
+    # 卸载 Xray
+    if [ -f "/usr/local/bin/xray" ]; then
+        bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ remove
+        echo -e "${CYAN}Xray 已卸载${NC}"
+    fi
+    
     # 卸载 Juicity
     if [ -d "/root/juicity" ]; then
         systemctl stop juicity
@@ -630,28 +810,59 @@ show_menu() {
     echo -e "${YELLOW}================================================${NC}"
     echo -e "${GREEN}                 协议管理菜单                  ${NC}"
     echo -e "${YELLOW}================================================${NC}"
-    echo -e "${GREEN}1. 更新所有服务端程序${NC}"
+    echo -e "${GREEN}1. 安装/更新所有协议服务${NC}"
     echo -e "${GREEN}2. 查看所有协议链接${NC}"
-    echo -e "${RED}3. 卸载所有协议${NC}"
+    echo -e "${GREEN}3. 更新所有服务端程序${NC}"
+    echo -e "${BLUE}4. 安装XanMod内核并优化系统${NC}"
+    echo -e "${RED}5. 卸载所有协议${NC}"
     echo -e "${YELLOW}================================================${NC}"
     echo -e "输入 ${CYAN}x${NC} 即可打开此菜单"
     echo -e "${YELLOW}================================================${NC}"
     
-    read -p "请输入选项 (1-3): " choice
+    read -p "请输入选项 (1-5): " choice
     
     case $choice in
-        1) update_services ;;
-        2) show_links ;;
-        3) uninstall_services ;;
-        *) echo -e "${RED}无效选项!${NC}" ;;
+        1) 
+            install_dependencies
+            install_xray_reality
+            install_juicity
+            install_tuic
+            install_hysteria2
+            install_anytls
+            read -p "按回车键返回主菜单..." input
+            ;;
+        2) 
+            show_links
+            read -p "按回车键返回主菜单..." input
+            ;;
+        3) 
+            update_services
+            read -p "按回车键返回主菜单..." input
+            ;;
+        4) 
+            install_kernel_and_optimize
+            read -p "按回车键返回主菜单..." input
+            ;;
+        5) 
+            uninstall_services
+            read -p "按回车键返回主菜单..." input
+            ;;
+        *) 
+            echo -e "${RED}无效选项!${NC}"
+            sleep 1
+            ;;
     esac
-    
-    echo ""
-    read -p "按回车键返回主菜单..." input
 }
 
 # 主函数
 main() {
+    check_root
+    
+    # 创建管理命令
+    if [ ! -f "/usr/local/bin/x" ]; then
+        create_management_script
+    fi
+    
     while true; do
         show_menu
     done
@@ -659,50 +870,3 @@ main() {
 
 # 启动主函数
 main
-EOF
-
-    chmod +x /usr/local/bin/x
-    echo -e "${GREEN}[√] 管理命令 'x' 已创建!${NC}"
-    echo -e "${YELLOW}您可以在终端输入 ${CYAN}x${YELLOW} 来管理协议${NC}"
-}
-
-# 主安装函数
-install_all_protocols() {
-    # 检查root权限
-    if [[ $EUID -ne 0 ]]; then
-        echo -e "${RED}此脚本必须以root权限运行!${NC}"
-        exit 1
-    fi
-    
-    # 清空旧配置
-    rm -f /root/proxy-config
-    
-    # 安装依赖
-    install_dependencies
-    
-    # 安装四个协议
-    install_juicity
-    install_tuic
-    install_hysteria2
-    install_anytls
-    
-    # 创建管理脚本
-    create_management_script
-    
-    # 显示安装完成信息
-    echo -e "${YELLOW}================================================${NC}"
-    echo -e "${GREEN}         所有协议已成功安装!          ${NC}"
-    echo -e "${YELLOW}================================================${NC}"
-    echo -e "使用 ${CYAN}x${NC} 命令管理协议:"
-    echo -e "  ${GREEN}1. 更新所有服务端程序${NC}"
-    echo -e "  ${GREEN}2. 查看所有协议链接${NC}"
-    echo -e "  ${RED}3. 卸载所有协议${NC}"
-    echo -e "${YELLOW}================================================${NC}"
-    
-    # 立即显示所有链接
-    echo -e "${GREEN}正在显示所有协议链接...${NC}"
-    /usr/local/bin/x 2
-}
-
-# 启动安装
-install_all_protocols
