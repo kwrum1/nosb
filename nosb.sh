@@ -859,15 +859,24 @@ show_menu() {
     esac
 }
 
+# 创建管理快捷命令函数
+create_management_script() {
+    cat > /usr/local/bin/x <<EOF
+#!/bin/bash
+bash $(realpath "$0")
+EOF
+    chmod +x /usr/local/bin/x
+}
+
 # 主函数
 main() {
     check_root
-    
+
     # 创建管理命令
     if [ ! -f "/usr/local/bin/x" ]; then
         create_management_script
     fi
-    
+
     while true; do
         show_menu
     done
@@ -875,3 +884,4 @@ main() {
 
 # 启动主函数
 main
+
