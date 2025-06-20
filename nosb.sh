@@ -585,6 +585,11 @@ EOF
 
 # 显示所有链接
 show_links() {
+    # 读取配置变量
+    if [[ -f "$CONFIG_FILE" ]]; then
+        source "$CONFIG_FILE"
+    fi
+
     local network_info=($(get_network_info | tr ',' ' '))
     local public_ip=${network_info[0]}
     local isp=${network_info[1]}
