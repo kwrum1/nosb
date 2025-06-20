@@ -568,8 +568,8 @@ install_kernel_and_optimize() {
     echo -e "${YELLOW}[+] 开始安装XanMod内核并优化系统...${NC}"
     
     # 安装XanMod内核
-    echo "deb http://deb.xanmod.org releases main" | tee /etc/apt/sources.list.d/xanmod-kernel.list
-    wget -qO - https://dl.xanmod.org/gpg.key | apt-key add -
+    wget -qO - https://dl.xanmod.org/archive.key | sudo gpg --dearmor -vo /etc/apt/keyrings/xanmod-archive-keyring.gpg
+    echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' | sudo tee /etc/apt/sources.list.d/xanmod-release.list
     apt update
     apt install -y 	linux-xanmod-edge-x64v3
     
