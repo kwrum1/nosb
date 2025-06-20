@@ -861,9 +861,17 @@ show_menu() {
 
 # 创建管理快捷命令函数
 create_management_script() {
+    # 确保主脚本路径固定
+    local fixed_path="/usr/local/bin/proxy-manager.sh"
+    if [ "$(realpath "$0")" != "$fixed_path" ]; then
+        cp "$(realpath "$0")" "$fixed_path"
+        chmod +x "$fixed_path"
+    fi
+
+    # 创建 x 快捷命令
     cat > /usr/local/bin/x <<EOF
 #!/bin/bash
-bash /usr/local/bin/proxy-manager.sh
+bash $fixed_path
 EOF
     chmod +x /usr/local/bin/x
 }
@@ -871,17 +879,8 @@ EOF
 # 主函数
 main() {
     check_root
-
-    # 创建管理命令
-    if [ ! -f "/usr/local/bin/x" ]; then
-        create_management_script
-    fi
-
+    create_management_script
     while true; do
         show_menu
     done
 }
-
-# 启动主函数
-main
-
