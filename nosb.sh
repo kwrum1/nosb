@@ -859,28 +859,19 @@ show_menu() {
     esac
 }
 
-# 创建管理快捷命令函数
 create_management_script() {
-    # 确保主脚本路径固定
-    local fixed_path="/usr/local/bin/proxy-manager.sh"
-    if [ "$(realpath "$0")" != "$fixed_path" ]; then
-        cp "$(realpath "$0")" "$fixed_path"
-        chmod +x "$fixed_path"
-    fi
+    # 先把当前脚本全部写到一个固定文件，比如 /usr/local/bin/proxy-manager.sh
+    script_path="/usr/local/bin/proxy-manager.sh"
 
-    # 创建 x 快捷命令
+    # 复制当前脚本内容（就是当前脚本文件本身）到固定路径
+    # 注意：$0 可能是管道，所以用 BASH_SOURCE[0] 更稳
+    cp "${BASH_SOURCE[0]}" "$script_path"
+    chmod +x "$script_path"
+
+    # 创建 x 命令，调用刚刚写好的脚本
     cat > /usr/local/bin/x <<EOF
 #!/bin/bash
-bash $fixed_path
+exec $script_path
 EOF
     chmod +x /usr/local/bin/x
-}
-
-# 主函数
-main() {
-    check_root
-    create_management_script
-    while true; do
-        show_menu
-    done
 }
