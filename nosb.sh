@@ -863,7 +863,7 @@ show_menu() {
 create_management_script() {
     cat > /usr/local/bin/x <<EOF
 #!/bin/bash
-bash $(realpath "$0")
+bash /usr/local/bin/proxy-manager.sh
 EOF
     chmod +x /usr/local/bin/x
 }
