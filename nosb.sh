@@ -809,6 +809,21 @@ uninstall_services() {
     echo -e "${GREEN}[√] 所有协议已卸载!${NC}"
 }
 
+# 创建管理快捷命令
+create_shortcut() {
+    local script_path="/usr/local/bin/x"
+    
+    # 如果快捷命令不存在，则创建
+    if [ ! -f "$script_path" ]; then
+        cat > "$script_path" <<EOF
+#!/bin/bash
+bash $(realpath "$0")
+EOF
+        chmod +x "$script_path"
+        echo -e "${GREEN}[√] 快捷命令 'x' 已创建${NC}"
+    fi
+}
+
 # 显示菜单
 show_menu() {
     clear
@@ -816,9 +831,9 @@ show_menu() {
     echo -e "${GREEN}                 协议管理菜单                  ${NC}"
     echo -e "${YELLOW}================================================${NC}"
     echo -e "${GREEN}1. 安装/更新所有协议服务${NC}"
-    echo -e "${GREEN}2. 查看所有协议链接${NC}"
-    echo -e "${GREEN}3. 更新所有服务端程序${NC}"
-    echo -e "${BLUE}4. 安装XanMod内核并优化系统${NC}"
+    echo -e "${GREEN}2. 安装XanMod内核并优化系统${NC}"
+    echo -e "${GREEN}3. 查看所有协议链接${NC}"
+    echo -e "${GREEN}4. 更新所有服务端程序${NC}"
     echo -e "${RED}5. 卸载所有协议${NC}"
     echo -e "${YELLOW}================================================${NC}"
     echo -e "输入 ${CYAN}x${NC} 即可打开此菜单"
@@ -834,53 +849,44 @@ show_menu() {
             install_tuic
             install_hysteria2
             install_anytls
-            read -p "按回车键返回主菜单..." input
             ;;
         2) 
-            show_links
-            read -p "按回车键返回主菜单..." input
+            install_kernel_and_optimize
             ;;
         3) 
-            update_services
-            read -p "按回车键返回主菜单..." input
+            show_links
             ;;
         4) 
-            install_kernel_and_optimize
-            read -p "按回车键返回主菜单..." input
+            update_services
             ;;
         5) 
             uninstall_services
-            read -p "按回车键返回主菜单..." input
+            ;;
+        x|X)
+            # 直接返回菜单
+            return
             ;;
         *) 
             echo -e "${RED}无效选项!${NC}"
             sleep 1
             ;;
     esac
-}
-
-# 创建管理快捷命令函数
-create_management_script() {
-    # 确保主脚本路径固定
-    local fixed_path="/usr/local/bin/proxy-manager.sh"
-    if [ "$(realpath "$0")" != "$fixed_path" ]; then
-        cp "$(realpath "$0")" "$fixed_path"
-        chmod +x "$fixed_path"
-    fi
-
-    # 创建 x 快捷命令
-    cat > /usr/local/bin/x <<EOF
-#!/bin/bash
-bash $fixed_path
-EOF
-    chmod +x /usr/local/bin/x
+    
+    read -p "按回车键返回主菜单..." input
 }
 
 # 主函数
 main() {
     check_root
-    create_management_script
+    create_shortcut
+    
+    # 创建配置文件
+    touch $CONFIG_FILE
+    
     while true; do
         show_menu
     done
 }
+
+# 启动脚本
+main
