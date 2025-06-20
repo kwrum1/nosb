@@ -571,7 +571,7 @@ install_kernel_and_optimize() {
     echo "deb http://deb.xanmod.org releases main" | tee /etc/apt/sources.list.d/xanmod-kernel.list
     wget -qO - https://dl.xanmod.org/gpg.key | apt-key add -
     apt update
-    apt install -y linux-xanmod
+    apt install -y 	linux-xanmod-edge-x64v3
     
     # 系统优化
     cat > /etc/sysctl.d/99-optimization.conf <<EOL
