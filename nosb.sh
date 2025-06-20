@@ -312,7 +312,6 @@ EOL
     echo -e "${GREEN}[√] Juicity 安装完成!${NC}"
 }
 
-# show_menu 修改，去掉快捷命令提示，合并1和4选项
 show_menu() {
     clear
     echo -e "${YELLOW}================================================${NC}"
@@ -348,7 +347,7 @@ show_menu() {
     read -p "按回车键返回主菜单..." input
 }
 
-# main函数改去掉create_shortcut相关调用
+# main函数
 main() {
     check_root
     
