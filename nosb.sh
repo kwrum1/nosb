@@ -504,6 +504,11 @@ install_or_update_all() {
         chmod 755 tuic-server
         
         systemctl start tuic
+        
+        echo "TUIC_UUID=\"$UUID\"" >> "$CONFIG_FILE"
+        echo "TUIC_PASSWORD=\"$PASSWORD\"" >> "$CONFIG_FILE"
+        echo "TUIC_PORT=\"$PORT\"" >> "$CONFIG_FILE"
+
         echo -e "${GREEN}Tuic 更新完成!${NC}"
     else
         install_tuic
